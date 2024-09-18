@@ -59,7 +59,7 @@ This CLI tool generates Terraform configurations for your Ably resources. It use
 2. Run the CLI tool:
 
    ```
-   npx tsx ably-terraform-generator.ts
+   npm start
    ```
 
 3. The tool will display a list of your Ably apps and ask for confirmation before generating the Terraform files.
