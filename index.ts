@@ -111,19 +111,26 @@ class AblyTerraformGenerator {
     return response.data;
   }
 
+  private sanitizeName(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  }
+
   private generateAppTerraform(app: App): string {
+    const sanitizedName = this.sanitizeName(app.name);
     return `
-resource "ably_app" "${app.id}" {
+resource "ably_app" "${sanitizedName}" {
   name = "${app.name.replace(/"/g, '\\"')}"
 }
 `;
   }
 
-  private generateKeyTerraform(key: Key, appId: string): string {
+  private generateKeyTerraform(key: Key, appName: string): string {
+    const sanitizedKeyName = this.sanitizeName(key.name);
+    const sanitizedAppName = this.sanitizeName(appName);
     const capability = JSON.stringify(key.capability);
     return `
-resource "ably_api_key" "${key.id}" {
-  app_id     = ably_app.${appId}.id
+resource "ably_api_key" "${sanitizedAppName}_${sanitizedKeyName}" {
+  app_id     = ably_app.${sanitizedAppName}.id
   name       = "${key.name.replace(/"/g, '\\"')}"
   capability = jsonencode(${capability})
 }
@@ -132,11 +139,13 @@ resource "ably_api_key" "${key.id}" {
 
   private generateNamespaceTerraform(
     namespace: Namespace,
-    appId: string
+    appName: string
   ): string {
+    const sanitizedNamespaceName = this.sanitizeName(namespace.id);
+    const sanitizedAppName = this.sanitizeName(appName);
     return `
-resource "ably_namespace" "${namespace.id}" {
-  app_id        = ably_app.${appId}.id
+resource "ably_namespace" "${sanitizedAppName}_${sanitizedNamespaceName}" {
+  app_id        = ably_app.${sanitizedAppName}.id
   id            = "${namespace.id}"
   authenticated = ${namespace.authenticated}
   persisted     = ${namespace.persisted}
@@ -147,10 +156,12 @@ resource "ably_namespace" "${namespace.id}" {
 `;
   }
 
-  private generateQueueTerraform(queue: Queue, appId: string): string {
+  private generateQueueTerraform(queue: Queue, appName: string): string {
+    const sanitizedQueueName = this.sanitizeName(queue.name);
+    const sanitizedAppName = this.sanitizeName(appName);
     return `
-resource "ably_queue" "${queue.id}" {
-  app_id     = ably_app.${appId}.id
+resource "ably_queue" "${sanitizedAppName}_${sanitizedQueueName}" {
+  app_id     = ably_app.${sanitizedAppName}.id
   name       = "${queue.name.replace(/"/g, '\\"')}"
   ttl        = ${queue.ttl}
   max_length = ${queue.maxLength}
@@ -159,11 +170,16 @@ resource "ably_queue" "${queue.id}" {
 `;
   }
 
-  private generateRuleTerraform(rule: Rule, appId: string): string {
+  private generateRuleTerraform(rule: Rule, appName: string): string {
+    const sanitizedRuleName = this.sanitizeName(rule.id);
+    const sanitizedAppName = this.sanitizeName(appName);
     const target = JSON.stringify(rule.target, null, 2);
     return `
-resource "ably_rule_${rule.ruleType.replace('/', '_')}" "${rule.id}" {
-  app_id       = ably_app.${appId}.id
+resource "ably_rule_${rule.ruleType.replace(
+      '/',
+      '_'
+    )}" "${sanitizedAppName}_${sanitizedRuleName}" {
+  app_id       = ably_app.${sanitizedAppName}.id
   status       = "${rule.status}"
   request_mode = "${rule.requestMode}"
   source = {
@@ -180,22 +196,22 @@ resource "ably_rule_${rule.ruleType.replace('/', '_')}" "${rule.id}" {
 
     const keys = await this.getKeys(app.id);
     keys.forEach((key) => {
-      terraform += this.generateKeyTerraform(key, app.id);
+      terraform += this.generateKeyTerraform(key, app.name);
     });
 
     const namespaces = await this.getNamespaces(app.id);
     namespaces.forEach((namespace) => {
-      terraform += this.generateNamespaceTerraform(namespace, app.id);
+      terraform += this.generateNamespaceTerraform(namespace, app.name);
     });
 
     const queues = await this.getQueues(app.id);
     queues.forEach((queue) => {
-      terraform += this.generateQueueTerraform(queue, app.id);
+      terraform += this.generateQueueTerraform(queue, app.name);
     });
 
     const rules = await this.getRules(app.id);
     rules.forEach((rule) => {
-      terraform += this.generateRuleTerraform(rule, app.id);
+      terraform += this.generateRuleTerraform(rule, app.name);
     });
 
     return terraform;
@@ -232,7 +248,7 @@ resource "ably_rule_${rule.ruleType.replace('/', '_')}" "${rule.id}" {
         for (const app of apps) {
           console.log(`Generating Terraform for app: ${app.name}`);
           const terraform = await this.generateTerraformForApp(app);
-          const fileName = `${app.name}.tf`;
+          const fileName = `${this.sanitizeName(app.name)}.tf`;
           fs.writeFileSync(path.join(outputDir, fileName), terraform);
           console.log(`Generated ${fileName}`);
         }
