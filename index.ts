@@ -114,17 +114,17 @@ class AblyTerraformGenerator {
   private generateAppTerraform(app: App): string {
     return `
 resource "ably_app" "${app.id}" {
-  name = "${app.name}"
+  name = "${app.name.replace(/"/g, '\\"')}"
 }
 `;
   }
 
   private generateKeyTerraform(key: Key, appId: string): string {
-    const capability = JSON.stringify(key.capability).replace(/"/g, '\\"');
+    const capability = JSON.stringify(key.capability);
     return `
 resource "ably_api_key" "${key.id}" {
-  app_id = ably_app.${appId}.id
-  name = "${key.name}"
+  app_id     = ably_app.${appId}.id
+  name       = "${key.name.replace(/"/g, '\\"')}"
   capability = jsonencode(${capability})
 }
 `;
@@ -136,13 +136,13 @@ resource "ably_api_key" "${key.id}" {
   ): string {
     return `
 resource "ably_namespace" "${namespace.id}" {
-  app_id = ably_app.${appId}.id
-  id = "${namespace.id}"
+  app_id        = ably_app.${appId}.id
+  id            = "${namespace.id}"
   authenticated = ${namespace.authenticated}
-  persisted = ${namespace.persisted}
-  persist_last = ${namespace.persistLast}
-  push_enabled = ${namespace.pushEnabled}
-  tls_only = ${namespace.tlsOnly}
+  persisted     = ${namespace.persisted}
+  persist_last  = ${namespace.persistLast}
+  push_enabled  = ${namespace.pushEnabled}
+  tls_only      = ${namespace.tlsOnly}
 }
 `;
   }
@@ -150,25 +150,25 @@ resource "ably_namespace" "${namespace.id}" {
   private generateQueueTerraform(queue: Queue, appId: string): string {
     return `
 resource "ably_queue" "${queue.id}" {
-  app_id = ably_app.${appId}.id
-  name = "${queue.name}"
-  ttl = ${queue.ttl}
+  app_id     = ably_app.${appId}.id
+  name       = "${queue.name.replace(/"/g, '\\"')}"
+  ttl        = ${queue.ttl}
   max_length = ${queue.maxLength}
-  region = "${queue.region}"
+  region     = "${queue.region}"
 }
 `;
   }
 
   private generateRuleTerraform(rule: Rule, appId: string): string {
-    const target = JSON.stringify(rule.target).replace(/"/g, '\\"');
+    const target = JSON.stringify(rule.target, null, 2);
     return `
 resource "ably_rule_${rule.ruleType.replace('/', '_')}" "${rule.id}" {
-  app_id = ably_app.${appId}.id
-  status = "${rule.status}"
+  app_id       = ably_app.${appId}.id
+  status       = "${rule.status}"
   request_mode = "${rule.requestMode}"
   source = {
-    channel_filter = "${rule.source.channelFilter}"
-    type = "${rule.source.type}"
+    channel_filter = "${rule.source.channelFilter.replace(/"/g, '\\"')}"
+    type           = "${rule.source.type}"
   }
   target = jsonencode(${target})
 }
