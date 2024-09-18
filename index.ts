@@ -18,6 +18,9 @@ interface Key {
 }
 
 interface Namespace {
+  batchingPolicy: string | null;
+  batchingInterval: string | null;
+  batchingEnabled: boolean | null;
   id: string;
   authenticated: boolean;
   persisted: boolean;
@@ -130,9 +133,10 @@ resource "ably_app" "${sanitizedName}" {
     const capability = JSON.stringify(key.capability);
     return `
 resource "ably_api_key" "${sanitizedAppName}_${sanitizedKeyName}" {
-  app_id     = ably_app.${sanitizedAppName}.id
-  name       = "${key.name.replace(/"/g, '\\"')}"
-  capability = jsonencode(${capability})
+  app_id           = ably_app.${sanitizedAppName}.id
+  name             = "${key.name.replace(/"/g, '\\"')}"
+  capability       = jsonencode(${capability})
+  revocable_tokens = false
 }
 `;
   }
@@ -145,13 +149,16 @@ resource "ably_api_key" "${sanitizedAppName}_${sanitizedKeyName}" {
     const sanitizedAppName = this.sanitizeName(appName);
     return `
 resource "ably_namespace" "${sanitizedAppName}_${sanitizedNamespaceName}" {
-  app_id        = ably_app.${sanitizedAppName}.id
-  id            = "${namespace.id}"
-  authenticated = ${namespace.authenticated}
-  persisted     = ${namespace.persisted}
-  persist_last  = ${namespace.persistLast}
-  push_enabled  = ${namespace.pushEnabled}
-  tls_only      = ${namespace.tlsOnly}
+  app_id            = ably_app.${sanitizedAppName}.id
+  id                = "${namespace.id}"
+  authenticated     = ${namespace.authenticated}
+  persisted         = ${namespace.persisted}
+  persist_last      = ${namespace.persistLast}
+  push_enabled      = ${namespace.pushEnabled}
+  tls_only          = ${namespace.tlsOnly}
+  batching_enabled  = ${namespace.batchingEnabled || false}
+  batching_interval = ${namespace.batchingInterval || 'null'}
+  batching_policy   = "${namespace.batchingPolicy || ''}"
 }
 `;
   }
@@ -173,22 +180,211 @@ resource "ably_queue" "${sanitizedAppName}_${sanitizedQueueName}" {
   private generateRuleTerraform(rule: Rule, appName: string): string {
     const sanitizedRuleName = this.sanitizeName(rule.id);
     const sanitizedAppName = this.sanitizeName(appName);
-    const target = JSON.stringify(rule.target, null, 2);
+
+    let ruleSpecificFields = '';
+    switch (rule.ruleType) {
+      case 'http':
+        ruleSpecificFields = this.generateHttpRuleFields(rule.target);
+        break;
+      case 'amqp':
+        ruleSpecificFields = this.generateAmqpRuleFields(rule.target);
+        break;
+      case 'amqp/external':
+        ruleSpecificFields = this.generateAmqpExternalRuleFields(rule.target);
+        break;
+      case 'aws/kinesis':
+        ruleSpecificFields = this.generateAwsKinesisRuleFields(rule.target);
+        break;
+      case 'aws/lambda':
+        ruleSpecificFields = this.generateAwsLambdaRuleFields(rule.target);
+        break;
+      case 'aws/sqs':
+        ruleSpecificFields = this.generateAwsSqsRuleFields(rule.target);
+        break;
+      case 'azure/function':
+        ruleSpecificFields = this.generateAzureFunctionRuleFields(rule.target);
+        break;
+      case 'google/function':
+        ruleSpecificFields = this.generateGoogleFunctionRuleFields(rule.target);
+        break;
+      case 'kafka':
+        ruleSpecificFields = this.generateKafkaRuleFields(rule.target);
+        break;
+      case 'pulsar':
+        ruleSpecificFields = this.generatePulsarRuleFields(rule.target);
+        break;
+      case 'zapier':
+        ruleSpecificFields = this.generateZapierRuleFields(rule.target);
+        break;
+      default:
+        console.warn(`Unsupported rule type: ${rule.ruleType}`);
+        return '';
+    }
+
     return `
-resource "ably_rule_${rule.ruleType.replace(
-      '/',
-      '_'
-    )}" "${sanitizedAppName}_${sanitizedRuleName}" {
+resource "ably_rule" "${sanitizedAppName}_${sanitizedRuleName}" {
   app_id       = ably_app.${sanitizedAppName}.id
   status       = "${rule.status}"
+  rule_type    = "${rule.ruleType}"
   request_mode = "${rule.requestMode}"
-  source = {
+  source {
     channel_filter = "${rule.source.channelFilter.replace(/"/g, '\\"')}"
     type           = "${rule.source.type}"
   }
-  target = jsonencode(${target})
+  ${ruleSpecificFields}
 }
 `;
+  }
+
+  private generateHttpRuleFields(target: any): string {
+    return `
+  target {
+    url             = "${target.url}"
+    format          = "${target.format}"
+    headers         = ${JSON.stringify(target.headers)}
+    signing_key_id  = "${target.signingKeyId || ''}"
+    enveloped       = ${target.enveloped || false}
+  }`;
+  }
+
+  private generateAmqpRuleFields(target: any): string {
+    return `
+  target {
+    queue_id  = "${target.queueId}"
+    format    = "${target.format}"
+    enveloped = ${target.enveloped || false}
+  }`;
+  }
+
+  private generateAmqpExternalRuleFields(target: any): string {
+    return `
+  target {
+    url                = "${target.url}"
+    routing_key        = "${target.routingKey}"
+    mandatory_route    = ${target.mandatoryRoute}
+    persistent_messages = ${target.persistentMessages}
+    message_ttl        = ${target.messageTtl || 'null'}
+    format             = "${target.format}"
+    headers            = ${JSON.stringify(target.headers)}
+    enveloped          = ${target.enveloped || false}
+  }`;
+  }
+
+  private generateAwsKinesisRuleFields(target: any): string {
+    return `
+  target {
+    region        = "${target.region}"
+    stream_name   = "${target.streamName}"
+    partition_key = "${target.partitionKey}"
+    format        = "${target.format}"
+    enveloped     = ${target.enveloped || false}
+    authentication {
+      authentication_mode = "${target.authentication.authenticationMode}"
+      access_key_id       = "${target.authentication.accessKeyId || ''}"
+      secret_access_key   = "${target.authentication.secretAccessKey || ''}"
+      assume_role_arn     = "${target.authentication.assumeRoleArn || ''}"
+    }
+  }`;
+  }
+
+  private generateAwsLambdaRuleFields(target: any): string {
+    return `
+  target {
+    region        = "${target.region}"
+    function_name = "${target.functionName}"
+    format        = "${target.format}"
+    enveloped     = ${target.enveloped || false}
+    authentication {
+      authentication_mode = "${target.authentication.authenticationMode}"
+      access_key_id       = "${target.authentication.accessKeyId || ''}"
+      secret_access_key   = "${target.authentication.secretAccessKey || ''}"
+      assume_role_arn     = "${target.authentication.assumeRoleArn || ''}"
+    }
+  }`;
+  }
+
+  private generateAwsSqsRuleFields(target: any): string {
+    return `
+  target {
+    region          = "${target.region}"
+    aws_account_id  = "${target.awsAccountId}"
+    queue_name      = "${target.queueName}"
+    format          = "${target.format}"
+    enveloped       = ${target.enveloped || false}
+    authentication {
+      authentication_mode = "${target.authentication.authenticationMode}"
+      access_key_id       = "${target.authentication.accessKeyId || ''}"
+      secret_access_key   = "${target.authentication.secretAccessKey || ''}"
+      assume_role_arn     = "${target.authentication.assumeRoleArn || ''}"
+    }
+  }`;
+  }
+
+  private generateAzureFunctionRuleFields(target: any): string {
+    return `
+  target {
+    azure_app_id   = "${target.azureAppId}"
+    function_name  = "${target.functionName}"
+    format         = "${target.format}"
+    headers        = ${JSON.stringify(target.headers)}
+    signing_key_id = "${target.signingKeyId || ''}"
+    enveloped      = ${target.enveloped || false}
+  }`;
+  }
+
+  private generateGoogleFunctionRuleFields(target: any): string {
+    return `
+  target {
+    region        = "${target.region}"
+    project_id    = "${target.projectId}"
+    function_name = "${target.functionName}"
+    format        = "${target.format}"
+    headers       = ${JSON.stringify(target.headers)}
+    signing_key_id = "${target.signingKeyId || ''}"
+    enveloped     = ${target.enveloped || false}
+  }`;
+  }
+
+  private generateKafkaRuleFields(target: any): string {
+    return `
+  target {
+    brokers     = ${JSON.stringify(target.brokers)}
+    routing_key = "${target.routingKey}"
+    format      = "${target.format}"
+    enveloped   = ${target.enveloped || false}
+    auth {
+      sasl {
+        mechanism = "${target.auth.sasl.mechanism}"
+        username  = "${target.auth.sasl.username}"
+        password  = "${target.auth.sasl.password}"
+      }
+    }
+  }`;
+  }
+
+  private generatePulsarRuleFields(target: any): string {
+    return `
+  target {
+    routing_key      = "${target.routingKey}"
+    topic            = "${target.topic}"
+    service_url      = "${target.serviceUrl}"
+    tls_trust_certs  = ${JSON.stringify(target.tlsTrustCerts)}
+    format           = "${target.format}"
+    enveloped        = ${target.enveloped || false}
+    authentication {
+      mode  = "${target.authentication.mode}"
+      token = "${target.authentication.token}"
+    }
+  }`;
+  }
+
+  private generateZapierRuleFields(target: any): string {
+    return `
+  target {
+    url            = "${target.url}"
+    headers        = ${JSON.stringify(target.headers)}
+    signing_key_id = "${target.signingKeyId || ''}"
+  }`;
   }
 
   private async generateTerraformForApp(app: App): Promise<string> {
